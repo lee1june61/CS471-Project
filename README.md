@@ -64,10 +64,17 @@ Training:  L = L_substitution (GISMo InfoNCE)  +  λ · L_health
 │   ├── run_lambda_sweep.py         # orchestrate λ sweep + collect metrics
 │   ├── convert_data.py             # GISMo .pkl + graph data → our format
 │   └── mock_data.py                # synthetic data for smoke testing
-└── notebooks/
-    ├── 01_setup_data.ipynb         # data prep (Colab)
-    ├── 06_eval_results.ipynb       # Main + Ablation tables + Pareto + case study
-    └── _gen_eval_notebook.py       # generator for the eval notebook
+└── notebooks/                      # Colab-ready, one notebook per training task
+    ├── 01_setup_data.ipynb         # data prep (only if you have raw GISMo files)
+    ├── 02_train_baseline.ipynb     # vanilla GISMo  (~30 min on T4)
+    ├── 03_train_v3_sweep.ipynb     # v3 lambda sweep -- main contribution  (~2.5 hr)
+    ├── 03b_train_v4_sweep.ipynb    # v4 lambda sweep -- decoder injection  (~2.5 hr)
+    ├── 03c_train_v2_sweep.ipynb    # v2 lambda sweep -- encoder injection  (~2.5 hr)
+    ├── 04_train_ablations.ipynb    # v1 MVP + v3 no-compound  (~1 hr)
+    ├── 05_filter_baseline.ipynb    # post-hoc filter on baseline ckpt  (~10 min)
+    ├── 06_eval_results.ipynb       # final Tables 1 / 2 + Pareto + case study
+    ├── _gen_train_notebooks.py     # generator for 02-05
+    └── _gen_eval_notebook.py       # generator for 06
 ```
 
 Outputs (training scripts auto-create subdirs under `--output_dir`):
@@ -123,7 +130,35 @@ pip install -r requirements.txt
 
 ---
 
-## Reproducing results
+## Reproducing on Colab (recommended)
+
+Each training task is one notebook so it fits a single free-T4 session (~12 h limit). Open them on Colab in order:
+
+| # | Notebook | What it does | ~Time |
+|---|---|---|---|
+| 02 | `02_train_baseline.ipynb` | Vanilla GISMo. Required for the filter baseline (05) and as the MRR reference. | 30 min |
+| 03 | `03_train_v3_sweep.ipynb` | v3 lambda sweep `{0, 0.1, 1, 5, 10}` -- the main result. | 2.5 hr |
+| 03b | `03b_train_v4_sweep.ipynb` | v4 lambda sweep (decoder concat) -- Pareto comparison. | 2.5 hr |
+| 03c | `03c_train_v2_sweep.ipynb` | v2 lambda sweep (encoder injection) -- Pareto comparison. | 2.5 hr |
+| 04 | `04_train_ablations.ipynb` | v1 MVP (w/o nutrition inject) + v3 `--ablation_no_compound`. | 1 hr |
+| 05 | `05_filter_baseline.ipynb` | GISMo + post-hoc hard / soft filter (uses ckpt from 02). | 10 min |
+| 06 | `06_eval_results.ipynb` | Builds Table 1 (main), Table 2 (ablation), Pareto plots, g-override check, case study. | 5 min |
+
+Each notebook expects your Drive layout to be:
+
+```
+MyDrive/CS471_project/
+├── data/                # the dataset (see "Data" section above)
+└── outputs/             # auto-created, persists ckpts and predictions
+```
+
+Edit `PROJECT_ROOT` in cell 5 if your layout differs. The notebooks `!git clone` this repo at `/content/CS471-Project`, so no upload is needed.
+
+GPU: free T4 is fine. CPU-only also works but each sweep takes ~10x longer.
+
+---
+
+## Reproducing locally (CLI)
 
 ### Step 0 — Smoke test (1 epoch each, ~5–10 min)
 
