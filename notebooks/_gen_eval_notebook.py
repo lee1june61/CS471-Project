@@ -75,8 +75,12 @@ cells.append(md(
 ))
 cells.append(code(
     "import json\n"
+    "import sys\n"
     "import contextlib\n"
     "import io\n"
+    "\n"
+    "# project source lives in CODE_DIR/src; add to path so we can import the evaluators\n"
+    "sys.path.insert(0, f'{CODE_DIR}/src')\n"
     "\n"
     "from evaluate_health import compute_health_metrics\n"
     "from evaluate_flavor import evaluate_flavor\n"

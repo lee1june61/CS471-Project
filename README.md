@@ -43,42 +43,31 @@ Training:  L = L_substitution (GISMo InfoNCE)  +  λ · L_health
 ## Repository layout
 
 ```
-code/
-├── README.md                  # this file
+.
+├── README.md                       # this file
 ├── requirements.txt
-│
-├── dataset.py                 # SubstitutionDataset, load_graph, load_node_ids,
-│                              #   load_nutrient_tensor, compute_thresholds,
-│                              #   HEALTH_NUTRIENT_KEYS
-│
-├── models_v1.py               # WeightedGINConv, IngredientEncoder,
-│                              #   SubstitutionDecoder, GISMo (baseline + MVP)
-├── models_v2.py               # encoder with nutrient_proj injection
-├── models_v4.py               # decoder with nutrient concat
-│
-├── train_v1.py                # --mode {baseline, mvp}; exports the shared
-│                              #   train/eval helpers used by v3
-├── train_v2.py                # encoder feature injection (7 nutrients)
-├── train_v3.py                # structural hub injection (7 nutrition hubs)
-├── train_v4.py                # decoder concat (sugar, sodium)
-│
-├── eval_filter_baseline.py    # post-hoc hard / soft filter on v1 baseline
-├── evaluate_health.py         # sugar / sodium Δ and satisfaction rate
-├── evaluate_flavor.py         # I-F profile cosine (flavor preservation)
-├── evaluate_id_ood.py         # MRR split by whether (s, y) was in train
-│
-├── run_lambda_sweep.py        # orchestrate λ_h sweep + collect all metrics
-│
-├── convert_data.py            # GISMo .pkl + graph-team data → our format
-├── mock_data.py               # tiny synthetic data for smoke testing
-│
+├── docs/
+│   └── data_format.md              # input/output schema spec
+├── src/                            # all source code (run scripts from project root: `python src/X.py`)
+│   ├── dataset.py                  # data loaders + HEALTH_NUTRIENT_KEYS
+│   ├── models_v1.py                # WeightedGINConv, encoder, decoder, GISMo
+│   ├── models_v2.py                # encoder with nutrient_proj injection
+│   ├── models_v4.py                # decoder with nutrient concat
+│   ├── train_v1.py                 # baseline + MVP
+│   ├── train_v2.py                 # encoder injection
+│   ├── train_v3.py                 # structural hub injection
+│   ├── train_v4.py                 # decoder concat injection
+│   ├── eval_filter_baseline.py     # post-hoc hard / soft filter
+│   ├── evaluate_health.py          # Δ sugar / sodium + satisfaction rate
+│   ├── evaluate_flavor.py          # I-F cosine (taste preservation)
+│   ├── evaluate_id_ood.py          # MRR split by whether (s, y) in train
+│   ├── run_lambda_sweep.py         # orchestrate λ sweep + collect metrics
+│   ├── convert_data.py             # GISMo .pkl + graph data → our format
+│   └── mock_data.py                # synthetic data for smoke testing
 └── notebooks/
-    ├── 01_setup_data.ipynb
-    ├── 02_baseline.ipynb
-    ├── 03_mvp.ipynb
-    ├── 04_v2.ipynb
-    ├── 05_v3.ipynb
-    └── 06_eval_results.ipynb  # Main table + Ablation table + Pareto + case study
+    ├── 01_setup_data.ipynb         # data prep (Colab)
+    ├── 06_eval_results.ipynb       # Main + Ablation tables + Pareto + case study
+    └── _gen_eval_notebook.py       # generator for the eval notebook
 ```
 
 Outputs (training scripts auto-create subdirs under `--output_dir`):
@@ -139,15 +128,15 @@ pip install -r requirements.txt
 ### Step 0 — Smoke test (1 epoch each, ~5–10 min)
 
 ```bash
-python train_v1.py --mode baseline --max_epochs 1 --patience 1 \
+python src/train_v1.py --mode baseline --max_epochs 1 --patience 1 \
     --data_dir ./data --output_dir ./out/smoke/baseline
-python train_v1.py --mode mvp      --max_epochs 1 --patience 1 \
+python src/train_v1.py --mode mvp      --max_epochs 1 --patience 1 \
     --data_dir ./data --output_dir ./out/smoke/mvp
-python train_v2.py                  --max_epochs 1 --patience 1 \
+python src/train_v2.py                  --max_epochs 1 --patience 1 \
     --data_dir ./data --output_dir ./out/smoke/v2
-python train_v3.py                  --max_epochs 1 --patience 1 \
+python src/train_v3.py                  --max_epochs 1 --patience 1 \
     --data_dir ./data --output_dir ./out/smoke/v3
-python train_v4.py                  --max_epochs 1 --patience 1 \
+python src/train_v4.py                  --max_epochs 1 --patience 1 \
     --data_dir ./data --output_dir ./out/smoke/v4
 ```
 
@@ -158,9 +147,9 @@ Each script's first log line should read `[load_node_ids] 6313 ingredients ... n
 Confirm that `L_health` actually drives training (run 3 epochs with two extreme λ values; val MRR should clearly differ):
 
 ```bash
-python train_v3.py --max_epochs 3 --lambda_h 0   --tau_percentile 0 \
+python src/train_v3.py --max_epochs 3 --lambda_h 0   --tau_percentile 0 \
     --data_dir ./data --output_dir ./out/lh_check_l0
-python train_v3.py --max_epochs 3 --lambda_h 10  --tau_percentile 0 \
+python src/train_v3.py --max_epochs 3 --lambda_h 10  --tau_percentile 0 \
     --data_dir ./data --output_dir ./out/lh_check_l10
 ```
 
@@ -168,25 +157,25 @@ python train_v3.py --max_epochs 3 --lambda_h 10  --tau_percentile 0 \
 
 ```bash
 # Vanilla GISMo (required for filter baseline)
-python train_v1.py --mode baseline --data_dir ./data --output_dir ./out/baseline
+python src/train_v1.py --mode baseline --data_dir ./data --output_dir ./out/baseline
 
 # v3 λ sweep (PDF Full model)
-python run_lambda_sweep.py --variant v3 --data_dir ./data --output_dir ./out \
+python src/run_lambda_sweep.py --variant v3 --data_dir ./data --output_dir ./out \
     --tau_percentile 0
 
 # (optional) Cross-variant sweeps for full Pareto comparison
-python run_lambda_sweep.py --variant v4 --data_dir ./data --output_dir ./out \
+python src/run_lambda_sweep.py --variant v4 --data_dir ./data --output_dir ./out \
     --tau_percentile 0
-python run_lambda_sweep.py --variant v2 --data_dir ./data --output_dir ./out \
+python src/run_lambda_sweep.py --variant v2 --data_dir ./data --output_dir ./out \
     --tau_percentile 0
 
 # Ablation 1: w/o nutrition inject (with all g overrides for case study)
-python train_v1.py --mode mvp --tau_percentile 0 \
+python src/train_v1.py --mode mvp --tau_percentile 0 \
     --test_g_overrides auto 1_0 0_1 1_1 \
     --data_dir ./data --output_dir ./out/v1mvp
 
 # Ablation 3: w/o flavor compound
-python train_v3.py --tau_percentile 0 --ablation_no_compound \
+python src/train_v3.py --tau_percentile 0 --ablation_no_compound \
     --data_dir ./data --output_dir ./out/v3_no_compound
 
 # (Ablation 2 = w/o L_health is automatically covered by λ=0 in the sweep)
@@ -195,7 +184,7 @@ python train_v3.py --tau_percentile 0 --ablation_no_compound \
 ### Step 3 — Filter baselines
 
 ```bash
-python eval_filter_baseline.py \
+python src/eval_filter_baseline.py \
     --checkpoint ./out/baseline/best_baseline.pt \
     --data_dir ./data --output_dir ./out/filter_baseline \
     --filter_mode both --alpha 0.5 1.0
@@ -206,7 +195,7 @@ python eval_filter_baseline.py \
 1. After the sweep, look at `out/sweep_summary_v3.csv` to choose `BEST_LAMBDA`.
 2. (For `g`-override case study) re-run the best-λ v3 with all four overrides:
    ```bash
-   python train_v3.py --lambda_h {BEST} --tau_percentile 0 \
+   python src/train_v3.py --lambda_h {BEST} --tau_percentile 0 \
        --test_g_overrides auto 1_0 0_1 1_1 \
        --data_dir ./data --output_dir ./out/v3_lam{BEST}
    ```
@@ -246,7 +235,7 @@ Inherited from GISMo unless noted.
 
 $$\mathcal{L}_{\text{total}} = \underbrace{- \log \frac{e^{\phi(s, y, r, g)}}{\sum_{v \in \mathcal{C}} e^{\phi(s, v, r, g)}}}_{\mathcal{L}_{\text{substitution}} \text{ (GISMo InfoNCE)}} + \lambda \cdot \underbrace{\sum_k g_k \cdot \max\!\left(0,\; m - \mathbb{E}_{v \sim p_\theta}[(n_s - n_v)_k]\right)\Big/ \sum_k g_k}_{\mathcal{L}_{\text{health}}}$$
 
-where the candidate set `C = {target, neg_1, ..., neg_K}` and the expectation is over the model's predicted softmax distribution. This is mathematically a soft form of nutrient-aware hard-negative mining (cf. self-adversarial negative sampling, Sun et al., ICLR 2019), specialized to the goal direction `g`.
+where the candidate set `C = {target, neg_1, ..., neg_K}` and the expectation is over the model's predicted softmax distribution.
 
 ---
 
@@ -269,16 +258,7 @@ where the candidate set `C = {target, neg_1, ..., neg_K}` and the expectation is
 - **FlavorGraph**: Park, D., Kim, K., Park, Y., Shin, J., Kang, J. (2021). *FlavorGraph: a large-scale food-chemical graph for generating food representations and recommending food pairings.* Scientific Reports. [paper](https://www.nature.com/articles/s41598-020-79422-8)
 - **Recipe1MSubs**: substitution pair dataset crawled from Recipe1M comments (released with GISMo).
 - **USDA FoodData Central**: standardized nutrient information used for `usda_mapping.json`.
-- **Self-adversarial negative sampling**: Sun, Z., Deng, Z.-H., Nie, J.-Y., Tang, J. (2019). *RotatE: Knowledge Graph Embedding by Relational Rotation in Complex Space.* ICLR. ← reference for the soft hard-negative mechanism we use in `L_health`.
 
 ---
 
-## Scope
-
-This is a graduate course project for **KAIST CS471 Graph Mining (Spring 2026)**. The contributions are:
-
-1. **Application**: extending GISMo's substitution framework with USDA nutrient information and a goal-conditioning vector to produce health-aware recommendations.
-2. **Architecture comparison**: three injection points for nutrient signal (encoder / structural / decoder) on the same dataset, with consistent evaluation.
-3. **Implementation**: end-to-end reproducible pipeline (sparse ingredient ids, λ sweep orchestration, post-hoc filter baseline, Main + Ablation result tables).
-
-We do **not** claim a novel ML method — the loss formulation is a standard expected-loss-under-predicted-distribution pattern adapted to this task. The novelty is in the combination and the application.
+KAIST CS471 / CS407 team project (Spring 2026).

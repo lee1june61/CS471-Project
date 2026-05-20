@@ -26,8 +26,8 @@ Usage:
   python run_lambda_sweep.py --variant v3 --data_dir ./data \\
       --output_dir ./out --skip_train
 
-The script must be run from the `code/` directory (so that
-`train_{variant}.py` is on the relative path).
+Resolves sibling `train_{variant}.py` paths from its own location,
+so it works from any working directory.
 """
 
 import argparse
@@ -64,8 +64,10 @@ def run_train(variant, lam, args):
         print(f"[sweep] λ={lam}: ckpt exists -> skip training")
         return out_dir
     os.makedirs(out_dir, exist_ok=True)
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                f"train_{variant}.py")
     cmd = [
-        sys.executable, f"train_{variant}.py",
+        sys.executable, script_path,
         "--data_dir", args.data_dir,
         "--output_dir", out_dir,
         "--lambda_h", str(lam),
