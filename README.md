@@ -1,26 +1,42 @@
 # GC-GISMo: Health-Aware Ingredient Substitution
 
-KAIST CS471 / CS407 Team Project (Spring 2026)
+> **KAIST CS471 Team Project — Spring 2026**
 
-Goal-conditioned extension of [GISMo](https://github.com/facebookresearch/gismo) (Pellegrini et al.) that recommends ingredient substitutes which preserve recipe flavor **and** satisfy a user-specified health goal (e.g., reduce sugar, reduce sodium). Built on top of [FlavorGraph](https://github.com/lamypark/FlavorGraph) ingredient–compound structure with added USDA nutrient information.
+Goal-conditioned extension of [GISMo](https://github.com/facebookresearch/gismo) (Pellegrini et al.) that recommends ingredient substitutes which preserve recipe flavor **and** satisfy a user-specified health goal (e.g., reduce sugar, reduce sodium). Built on top of the [FlavorGraph](https://github.com/lamypark/FlavorGraph) ingredient–compound structure with added USDA nutrient information.
+
+**TL;DR** — open `notebooks/03_train_v3_sweep.ipynb` on Colab, point `PROJECT_ROOT` at your Drive, run all. That reproduces the main result.
+
+## Contents
+
+- [Idea](#idea-in-one-figure)
+- [Variants](#variants-compared-in-this-repo)
+- [Repository layout](#repository-layout)
+- [Data](#data)
+- [Setup](#setup)
+- [Reproducing on Colab](#reproducing-on-colab-recommended) ← recommended path
+- [Reproducing locally (CLI)](#reproducing-locally-cli)
+- [Hyperparameters](#hyperparameters)
+- [Loss](#loss)
+- [Evaluation metrics](#evaluation-metrics)
+- [References](#references)
 
 ---
 
 ## Idea in one figure
 
 ```
-Recipe context r --+
-                   |     +--- v2: encoder feature injection (7 nutrients)
-Source s --[GIN]---+---->|--- v3: structural injection (7 nutrition hub nodes + I-N edges)
-Candidate v -------+     +--- v4: decoder concat (raw n_s, n_v)
-                   |
-Health goal g -----+--> Decoder MLP --> score(s, v, r, g)
+Recipe context r ─┐
+                  │     ┌── v2: encoder feature injection (7 nutrients)
+Source s ──[GIN]──┼────►│── v3: structural injection (7 nutrition hubs + I–N edges)  ◄ Full model
+Candidate v ──────┤     └── v4: decoder concat (raw n_s, n_v)
+                  │
+Health goal g ────┴──► Decoder MLP ──► score(s, v, r, g)
 
 Training:  L = L_substitution (GISMo InfoNCE)  +  λ · L_health
-                                                    ↑
-                                  expected nutrient improvement under
-                                  the model's predicted candidate
-                                  distribution (gradient-coupled with L_sub)
+                                                   ▲
+                                expected nutrient improvement under
+                                the model's predicted candidate
+                                distribution (gradient-coupled with L_sub)
 ```
 
 `g ∈ {0,1}²` — `[low_sugar, low_sodium]`. At test time you can override `g` to ask the trained model for sugar-only, sodium-only, or both-targeting recommendations from the same query.
@@ -77,7 +93,8 @@ Training:  L = L_substitution (GISMo InfoNCE)  +  λ · L_health
     └── _gen_eval_notebook.py       # generator for 06
 ```
 
-Outputs (training scripts auto-create subdirs under `--output_dir`):
+<details>
+<summary><b>Output directory layout</b> (training scripts auto-create subdirs under <code>--output_dir</code>)</summary>
 
 ```
 out/
@@ -94,6 +111,8 @@ out/
 ├── sweep_summary_v3.csv       # plot-ready Pareto data
 └── sweep_summary_v3.json      # same + raw metric dicts
 ```
+
+</details>
 
 ---
 
@@ -245,7 +264,8 @@ python src/eval_filter_baseline.py \
 
 ## Hyperparameters
 
-Inherited from GISMo unless noted.
+<details>
+<summary>Full table — inherited from GISMo unless marked <i>ours</i></summary>
 
 | Parameter | Value | Source |
 |---|---|---|
@@ -263,6 +283,8 @@ Inherited from GISMo unless noted.
 | τ (goal threshold) | percentile of positive Δ in train (default 0) | ours |
 | `g_dim` | 2 (sugar, sodium) | ours |
 | Hub nutrient keys (v2/v3) | 7 (calories, fat, sat-fat, carb, sugar, protein, sodium) | ours |
+
+</details>
 
 ---
 
@@ -296,4 +318,4 @@ where the candidate set `C = {target, neg_1, ..., neg_K}` and the expectation is
 
 ---
 
-KAIST CS471 / CS407 team project (Spring 2026).
+KAIST CS471 team project — Spring 2026.
