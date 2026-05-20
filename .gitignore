@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# Virtual envs
+venv/
+env/
+.venv/
+.env
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Training outputs (large + reproducible from the scripts)
+out/
+outputs/
+*.pt
+*.ckpt
+*.pth
+
+# Data lives outside the repo (FlavorGraph / Recipe1MSubs / USDA — bring your own)
+data/
+data_raw/
+
+# Course-materials PDFs — not for the public repo
+*.pdf
+
+# Internal dev journal / session log
+HANDOFF.md
+
+# Old archived code
+_archive/
+
+# Notebook export artifacts
+notebooks/*.html
+notebooks/*.pdf
