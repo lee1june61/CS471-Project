@@ -252,6 +252,7 @@ def main():
 
     shutil.copy(DATA_RAW / "flavorgraph_edges.csv", OUT_DIR / "flavorgraph_edges.csv")
     shutil.copy(DATA_RAW / "usda_mapping.json", OUT_DIR / "usda_mapping.json")
+    shutil.copy(DATA_RAW / "nodes_filtered.csv", OUT_DIR / "nodes_filtered.csv")
 
     ing_df = nodes[nodes["node_type"] == "ingredient"][["node_id", "name"]].copy()
     ing_df.columns = ["id", "name"]
@@ -288,6 +289,7 @@ def main():
     print(f"  recipes.json:           {len(recipes_int)} recipes")
     print(f"  flavorgraph_edges.csv:  copied")
     print(f"  usda_mapping.json:      copied")
+    print(f"  nodes_filtered.csv:     copied")
     print(f"  ingredients.csv:        {len(ing_df)} ingredients")
     print(f"  data_meta.json:         {meta}")
 
