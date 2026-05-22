@@ -4,23 +4,19 @@ Run once after editing this file:
     python _gen_train_notebooks.py
 
 Each notebook:
-- Installs deps, mounts Drive, clones the repo
+- Installs deps, mounts Drive (code + data both live in Drive)
 - Runs a 1-epoch smoke test (skip-friendly)
 - Runs the actual training command(s)
 - Prints summary of artifacts
 
 The TA only needs to:
 1. Open the notebook in Colab (free T4 OK)
-2. Set PROJECT_ROOT in cell 5 to wherever they put `data/`
+2. Set PROJECT_ROOT (cell 4) if your Drive layout differs
 3. Runtime -> Run all
 """
 
 import json
-import os
 import uuid
-
-
-REPO_URL = "https://github.com/lee1june61/CS471-Project.git"
 
 
 def md(src):
@@ -54,7 +50,7 @@ def common_setup_cells(title, summary, est_time):
             f"\n"
             f"**Steps**:\n"
             f"1. Runtime > Change runtime type > T4 GPU\n"
-            f"2. Set `PROJECT_ROOT` (cell 5) to wherever you put `data/` in your Drive\n"
+            f"2. Set `PROJECT_ROOT` (cell 4) if your Drive layout differs\n"
             f"3. Runtime > Run all"
         ),
         md("## 1. GPU + dependencies"),
@@ -64,35 +60,20 @@ def common_setup_cells(title, summary, est_time):
             "# Colab's default torch is recent enough that the generic install works.\n"
             "!pip install -q torch_geometric pandas numpy matplotlib"
         ),
-        md("## 2. Get the code"),
-        code(
-            f"# Clone (or refresh) the repo\n"
-            f"import os\n"
-            f"if not os.path.exists('/content/CS471-Project'):\n"
-            f"    !git clone {REPO_URL} /content/CS471-Project\n"
-            f"else:\n"
-            f"    !cd /content/CS471-Project && git pull --ff-only\n"
-            f"%cd /content/CS471-Project"
-        ),
-        md("## 3. Mount Drive for data + outputs"),
+        md("## 2. Mount Drive (code + data both live in Drive)"),
         code(
             "from google.colab import drive\n"
             "drive.mount('/content/drive')"
         ),
         code(
-            "# === EDIT THIS if your Drive layout is different ===\n"
+            "import os\n"
             "PROJECT_ROOT = '/content/drive/MyDrive/CS471_project'\n"
+            "CODE_DIR     = f'{PROJECT_ROOT}/code'\n"
             "DATA_DIR     = f'{PROJECT_ROOT}/data'\n"
             "OUTPUT_DIR   = f'{PROJECT_ROOT}/outputs'\n"
             "os.makedirs(OUTPUT_DIR, exist_ok=True)\n"
-            "\n"
-            "# sanity check\n"
-            "expected = ['flavorgraph_edges.csv', 'nodes_filtered.csv',\n"
-            "             'pairs_train.csv', 'pairs_val.csv', 'pairs_test.csv',\n"
-            "             'recipes.json', 'usda_mapping.json']\n"
-            "missing = [f for f in expected if not os.path.exists(f'{DATA_DIR}/{f}')]\n"
-            "if missing:\n"
-            "    raise FileNotFoundError(f'missing data files in {DATA_DIR}: {missing}')\n"
+            "os.chdir(CODE_DIR)\n"
+            "print(f'CWD        = {os.getcwd()}')\n"
             "print(f'DATA_DIR   = {DATA_DIR}')\n"
             "print(f'OUTPUT_DIR = {OUTPUT_DIR}')"
         ),
@@ -100,13 +81,18 @@ def common_setup_cells(title, summary, est_time):
 
 
 def smoke_test_cell(variant, mode_flag=""):
-    """1-epoch smoke that confirms the script runs end-to-end."""
+    """1-epoch smoke that confirms the script runs end-to-end.
+
+    `--no_resume` is critical here: max_epochs=1 means a single stale
+    `last_*.pt` from a previously-interrupted smoke would make every
+    subsequent smoke a silent no-op (start_epoch=2 > max_epochs=1).
+    """
     mode = f"--mode {mode_flag} " if mode_flag else ""
     return code(
         f"# 1-epoch smoke test (~30 sec on T4). Skip by changing False below.\n"
         f"RUN_SMOKE = True\n"
         f"if RUN_SMOKE:\n"
-        f"    !python src/train_{variant}.py {mode}--max_epochs 1 --patience 1 \\\n"
+        f"    !python src/train_{variant}.py {mode}--max_epochs 1 --patience 1 --no_resume \\\n"
         f"      --data_dir {{DATA_DIR}} --output_dir {{OUTPUT_DIR}}/smoke_{variant}{mode_flag and ('_' + mode_flag) or ''}\n"
         f"    print('\\n[smoke] OK')"
     )
@@ -125,16 +111,16 @@ cells = common_setup_cells(
     ),
     est_time="30 min",
 )
-cells.append(md("## 4. Smoke test (optional)"))
+cells.append(md("## 3. Smoke test (optional)"))
 cells.append(smoke_test_cell("v1", mode_flag="baseline"))
-cells.append(md("## 5. Train vanilla GISMo"))
+cells.append(md("## 4. Train vanilla GISMo"))
 cells.append(code(
     "!python src/train_v1.py --mode baseline \\\n"
     "  --data_dir {DATA_DIR} --output_dir {OUTPUT_DIR}/baseline\n"
     "\n"
     "print('\\n[done] checkpoint:', f'{OUTPUT_DIR}/baseline/best_baseline.pt')"
 ))
-cells.append(md("## 6. Quick check"))
+cells.append(md("## 5. Quick check"))
 cells.append(code(
     "import json\n"
     "with open(f'{OUTPUT_DIR}/baseline/test_predictions_baseline.json') as f:\n"
@@ -179,9 +165,9 @@ cells = common_setup_cells(
     ),
     est_time="2.5 hr",
 )
-cells.append(md("## 4. Smoke test (optional)"))
+cells.append(md("## 3. Smoke test (optional)"))
 cells.append(smoke_test_cell("v3"))
-cells.append(md("## 5. Run lambda sweep"))
+cells.append(md("## 4. Run lambda sweep"))
 cells.append(code(
     "# Sweep produces per-lambda subdir + sweep_summary_v3.csv\n"
     "!python src/run_lambda_sweep.py --variant v3 \\\n"
@@ -189,7 +175,7 @@ cells.append(code(
     "  --tau_percentile 0 \\\n"
     "  --lambdas 0 0.1 1 5 10"
 ))
-cells.append(md("## 6. Quick look at the sweep summary"))
+cells.append(md("## 5. Quick look at the sweep summary"))
 cells.append(code(
     "import pandas as pd\n"
     "df = pd.read_csv(f'{OUTPUT_DIR}/sweep_summary_v3.csv')\n"
@@ -198,7 +184,7 @@ cells.append(code(
     "print(df[[c for c in show if c in df.columns]].round(2).to_string(index=False))"
 ))
 cells.append(md(
-    "## 7. (Optional) Re-evaluate best-lambda v3 with all 4 g overrides\n"
+    "## 6. (Optional) Re-evaluate best-lambda v3 with all 4 g overrides\n"
     "\n"
     "Needed for the g-override sensitivity check and case study in "
     "`06_eval_results.ipynb`. Re-uses the saved checkpoint (no retraining)."
@@ -230,16 +216,16 @@ cells = common_setup_cells(
     ),
     est_time="2.5 hr",
 )
-cells.append(md("## 4. Smoke test (optional)"))
+cells.append(md("## 3. Smoke test (optional)"))
 cells.append(smoke_test_cell("v4"))
-cells.append(md("## 5. Run lambda sweep"))
+cells.append(md("## 4. Run lambda sweep"))
 cells.append(code(
     "!python src/run_lambda_sweep.py --variant v4 \\\n"
     "  --data_dir {DATA_DIR} --output_dir {OUTPUT_DIR} \\\n"
     "  --tau_percentile 0 \\\n"
     "  --lambdas 0 0.1 1 5 10"
 ))
-cells.append(md("## 6. Quick look"))
+cells.append(md("## 5. Quick look"))
 cells.append(code(
     "import pandas as pd\n"
     "df = pd.read_csv(f'{OUTPUT_DIR}/sweep_summary_v4.csv')\n"
@@ -263,16 +249,16 @@ cells = common_setup_cells(
     ),
     est_time="2.5 hr",
 )
-cells.append(md("## 4. Smoke test (optional)"))
+cells.append(md("## 3. Smoke test (optional)"))
 cells.append(smoke_test_cell("v2"))
-cells.append(md("## 5. Run lambda sweep"))
+cells.append(md("## 4. Run lambda sweep"))
 cells.append(code(
     "!python src/run_lambda_sweep.py --variant v2 \\\n"
     "  --data_dir {DATA_DIR} --output_dir {OUTPUT_DIR} \\\n"
     "  --tau_percentile 0 \\\n"
     "  --lambdas 0 0.1 1 5 10"
 ))
-cells.append(md("## 6. Quick look"))
+cells.append(md("## 5. Quick look"))
 cells.append(code(
     "import pandas as pd\n"
     "df = pd.read_csv(f'{OUTPUT_DIR}/sweep_summary_v2.csv')\n"
@@ -302,22 +288,22 @@ cells = common_setup_cells(
     ),
     est_time="1 hr",
 )
-cells.append(md("## 4. Smoke tests"))
+cells.append(md("## 3. Smoke tests"))
 cells.append(smoke_test_cell("v1", mode_flag="mvp"))
 cells.append(smoke_test_cell("v3"))
-cells.append(md("## 5. Train v1 MVP (Ablation 1)"))
+cells.append(md("## 4. Train v1 MVP (Ablation 1)"))
 cells.append(code(
     "# All g overrides included so the case study cell in 06 works.\n"
     "!python src/train_v1.py --mode mvp --tau_percentile 0 \\\n"
     "  --test_g_overrides auto 1_0 0_1 1_1 \\\n"
     "  --data_dir {DATA_DIR} --output_dir {OUTPUT_DIR}/v1mvp"
 ))
-cells.append(md("## 6. Train v3 with no compound edges (Ablation 3)"))
+cells.append(md("## 5. Train v3 with no compound edges (Ablation 3)"))
 cells.append(code(
     "!python src/train_v3.py --tau_percentile 0 --ablation_no_compound \\\n"
     "  --data_dir {DATA_DIR} --output_dir {OUTPUT_DIR}/v3_no_compound"
 ))
-cells.append(md("## 7. Quick check"))
+cells.append(md("## 6. Quick check"))
 cells.append(code(
     "import json\n"
     "for label, path in [\n"
@@ -349,7 +335,7 @@ cells = common_setup_cells(
     ),
     est_time="10 min",
 )
-cells.append(md("## 4. Run post-hoc filters"))
+cells.append(md("## 3. Run post-hoc filters"))
 cells.append(code(
     "ckpt_path = f'{OUTPUT_DIR}/baseline/best_baseline.pt'\n"
     "if not os.path.exists(ckpt_path):\n"
@@ -361,7 +347,7 @@ cells.append(code(
     "  --data_dir {DATA_DIR} --output_dir {OUTPUT_DIR}/filter_baseline \\\n"
     "  --filter_mode both --alpha 0.5 1.0"
 ))
-cells.append(md("## 5. Summary"))
+cells.append(md("## 4. Summary"))
 cells.append(code(
     "import json\n"
     "with open(f'{OUTPUT_DIR}/filter_baseline/summary.json') as f:\n"

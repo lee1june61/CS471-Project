@@ -20,6 +20,7 @@ Outputs:
 import argparse
 import json
 import os
+import random
 import time
 
 import numpy as np
@@ -33,7 +34,8 @@ from dataset import (HEALTH_NUTRIENT_KEYS, SubstitutionDataset,
                      _safe_float)
 from models_v1 import GISMo
 from train_v1 import (GOAL_DIM, parse_g_label, train_one_epoch, evaluate,
-                      build_id_to_pos)
+                      build_id_to_pos,
+                      save_checkpoint, maybe_resume, cleanup_last_ckpt)
 
 
 DEFAULT_HUB_NUTRIENT_KEYS = (
@@ -152,7 +154,11 @@ def parse_args():
     p.add_argument("--eval_chunk", type=int, default=256)
     p.add_argument("--num_workers", type=int, default=2)
 
-    p.add_argument("--resume", type=str, default=None)
+    p.add_argument("--resume", type=str, default=None,
+                   help="Explicit checkpoint path. If omitted, auto-resume from "
+                        "<output_dir>/last_v3.pt when present.")
+    p.add_argument("--no_resume", action="store_true",
+                   help="Ignore any existing last_v3.pt and start fresh.")
     p.add_argument("--no_multi_valid", action="store_true")
     p.add_argument("--ablation_no_compound", action="store_true",
                    help="Drop I-F / I-D edges from the BASE graph (keep I-I + hub edges). "
@@ -183,6 +189,7 @@ def main():
               "auto-detected from nodes_filtered.csv")
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+    random.seed(args.seed)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     os.makedirs(args.output_dir, exist_ok=True)
@@ -293,22 +300,25 @@ def main():
 
     optimizer = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    start_epoch = 1
-    best_mrr = -1.0
-    if args.resume:
-        if not os.path.exists(args.resume):
-            raise FileNotFoundError(args.resume)
-        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model"])
-        if "optimizer" in ckpt:
-            optimizer.load_state_dict(ckpt["optimizer"])
-        start_epoch = int(ckpt["epoch"]) + 1
-        if "val_metrics" in ckpt and "MRR" in ckpt["val_metrics"]:
-            best_mrr = float(ckpt["val_metrics"]["MRR"])
-        print(f"[resume] from epoch {ckpt['epoch']}, best_mrr={best_mrr:.2f}")
+    best_ckpt_path = os.path.join(args.output_dir, "best_v3.pt")
+    last_ckpt_path = os.path.join(args.output_dir, "last_v3.pt")
+    ckpt_extra = {
+        "num_total_nodes": num_total_nodes,
+        "num_total_v3": num_total_v3,
+        "K_hubs": K_hubs,
+    }
 
-    ckpt_path = os.path.join(args.output_dir, "best_v3.pt")
-    epochs_no_improve = 0
+    start_epoch, best_mrr, epochs_no_improve = maybe_resume(
+        args, "v3", args.output_dir, model, optimizer, device,
+    )
+
+    if start_epoch > args.max_epochs:
+        print(f"[resume] start_epoch={start_epoch} > max_epochs={args.max_epochs}; "
+              f"training loop will be skipped.")
+        if not os.path.exists(best_ckpt_path):
+            print(f"[resume] ERROR: no {best_ckpt_path} either. "
+                  f"Pass --no_resume to start fresh, or raise --max_epochs.")
+            return
 
     for epoch in range(start_epoch, args.max_epochs + 1):
         t0 = time.time()
@@ -329,31 +339,34 @@ def main():
               f"val MRR={val_metrics['MRR']:.2f} Hit@1={val_metrics['Hit@1']:.2f} "
               f"Hit@10={val_metrics['Hit@10']:.2f} | {elapsed:.1f}s")
 
-        if val_metrics["MRR"] > best_mrr:
+        improved = val_metrics["MRR"] > best_mrr
+        if improved:
             best_mrr = val_metrics["MRR"]
             epochs_no_improve = 0
-            torch.save({
-                "epoch": epoch,
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "args": vars(args),
-                "num_total_nodes": num_total_nodes,
-                "num_total_v3": num_total_v3,
-                "K_hubs": K_hubs,
-                "val_metrics": {k: v for k, v in val_metrics.items()
-                                 if k in ("MRR", "Hit@1", "Hit@3", "Hit@10")},
-            }, ckpt_path)
         else:
             epochs_no_improve += 1
-            if epochs_no_improve >= args.patience:
-                print(f"[early-stop] no MRR improvement for {args.patience} epochs.")
-                break
 
-    if not os.path.exists(ckpt_path):
+        # Save best BEFORE last — see train_v1.py for rationale.
+        ckpt_state = dict(
+            model=model, optimizer=optimizer, epoch=epoch,
+            best_mrr=best_mrr, epochs_no_improve=epochs_no_improve,
+            args=args, val_metrics=val_metrics, extra=ckpt_extra,
+        )
+        if improved:
+            save_checkpoint(best_ckpt_path, **ckpt_state)
+        save_checkpoint(last_ckpt_path, **ckpt_state)
+
+        if epochs_no_improve >= args.patience:
+            print(f"[early-stop] no MRR improvement for {args.patience} epochs.")
+            break
+
+    cleanup_last_ckpt(args.output_dir, "v3")
+
+    if not os.path.exists(best_ckpt_path):
         print("[warning] no checkpoint saved.")
         return
 
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    ckpt = torch.load(best_ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model"])
 
     for label in args.test_g_overrides:

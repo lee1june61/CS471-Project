@@ -79,6 +79,11 @@ def run_train(variant, lam, args):
         cmd += ["--max_epochs", str(args.max_epochs)]
     if args.patience is not None:
         cmd += ["--patience", str(args.patience)]
+    # --force_retrain means start from scratch for this lambda; otherwise
+    # a stale last_<variant>.pt in out_dir (from a previously-interrupted
+    # run) would trigger auto-resume with the OLD lambda's optimizer state.
+    if args.force_retrain:
+        cmd.append("--no_resume")
     print(f"\n[sweep] λ={lam}: train -> {' '.join(cmd)}")
     t0 = time.time()
     subprocess.run(cmd, check=True)

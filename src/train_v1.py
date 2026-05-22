@@ -25,6 +25,8 @@ Usage:
 import argparse
 import json
 import os
+import random
+import shutil
 import time
 
 import numpy as np
@@ -40,6 +42,185 @@ from models_v1 import GISMo
 
 
 GOAL_DIM = 2
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint helpers (shared with train_v2/v3/v4)
+# ---------------------------------------------------------------------------
+
+def _rng_snapshot():
+    snap = {
+        "torch": torch.get_rng_state(),
+        "numpy": np.random.get_state(),
+        "python": random.getstate(),
+    }
+    if torch.cuda.is_available():
+        snap["torch_cuda"] = torch.cuda.get_rng_state_all()
+    return snap
+
+
+def _rng_restore(snap):
+    # NOTE: load_checkpoint uses torch.load(map_location=device); when device
+    # is CUDA, every tensor in the unpickled dict (including these RNG
+    # ByteTensors) lands on CUDA. torch.set_rng_state and
+    # torch.cuda.set_rng_state_all both require CPU tensors, so we move
+    # them back explicitly before restoring.
+    if snap is None:
+        return
+    if snap.get("torch") is not None:
+        torch.set_rng_state(snap["torch"].cpu())
+    if snap.get("numpy") is not None:
+        np.random.set_state(snap["numpy"])
+    if snap.get("python") is not None:
+        random.setstate(snap["python"])
+    cuda_state = snap.get("torch_cuda")
+    if cuda_state is not None and torch.cuda.is_available():
+        try:
+            cuda_state = [t.cpu() for t in cuda_state]
+            torch.cuda.set_rng_state_all(cuda_state)
+        except Exception as e:
+            print(f"[resume] warning: could not restore CUDA RNG: {e}")
+
+
+def save_checkpoint(path, *, model, optimizer, epoch, best_mrr,
+                    epochs_no_improve, args, val_metrics, extra=None):
+    """Atomic checkpoint save with full resumable state.
+
+    Writes to <path>.tmp.<pid> then os.replace so a crash mid-save leaves
+    the previous good checkpoint intact, and concurrent writers to the
+    same output_dir don't collide on the tmp filename.
+    """
+    state = {
+        "epoch": int(epoch),
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "best_mrr": float(best_mrr),
+        "epochs_no_improve": int(epochs_no_improve),
+        "args": vars(args) if not isinstance(args, dict) else args,
+        "val_metrics": {k: v for k, v in val_metrics.items()
+                         if k in ("MRR", "Hit@1", "Hit@3", "Hit@10")},
+        "rng": _rng_snapshot(),
+    }
+    if extra:
+        state.update(extra)
+    tmp = f"{path}.tmp.{os.getpid()}"
+    torch.save(state, tmp)
+    os.replace(tmp, path)
+
+
+def load_checkpoint(path, model, optimizer, device, restore_rng=True):
+    """Load checkpoint; restore model/optimizer/RNG.
+
+    Returns (start_epoch, best_mrr, epochs_no_improve, raw_ckpt_dict).
+    Tolerates older checkpoints (missing best_mrr / epochs_no_improve / rng).
+    """
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    model.load_state_dict(ckpt["model"])
+    if optimizer is not None and "optimizer" in ckpt:
+        optimizer.load_state_dict(ckpt["optimizer"])
+    start_epoch = int(ckpt["epoch"]) + 1
+    if "best_mrr" in ckpt:
+        best_mrr = float(ckpt["best_mrr"])
+    else:
+        best_mrr = float(ckpt.get("val_metrics", {}).get("MRR", -1.0))
+    epochs_no_improve = int(ckpt.get("epochs_no_improve", 0))
+    if restore_rng:
+        _rng_restore(ckpt.get("rng"))
+    return start_epoch, best_mrr, epochs_no_improve, ckpt
+
+
+# Args whose mismatch between current run and resumed checkpoint
+# usually means shape mismatch or different experiment — warn loudly.
+_SHAPE_AFFECTING_ARGS = (
+    "mode", "embed_dim", "num_gin_layers", "ablation_no_compound",
+    "hub_nutrient_keys", "encoder_nutrient_keys", "lambda_h",
+    "tau_percentile",
+)
+
+
+def _warn_arg_mismatches(saved_args, current_args):
+    """Print actionable diff between saved checkpoint args and current run."""
+    mismatches = []
+    for k in _SHAPE_AFFECTING_ARGS:
+        if k not in saved_args:
+            continue
+        cur = getattr(current_args, k, None)
+        saved = saved_args[k]
+        if cur != saved:
+            mismatches.append((k, saved, cur))
+    if mismatches:
+        print(f"[resume] WARNING: {len(mismatches)} arg mismatch(es) vs checkpoint:")
+        for k, saved, cur in mismatches:
+            print(f"  {k}: ckpt={saved!r}  current={cur!r}")
+        print(f"[resume] If model shapes differ, load_state_dict will fail.")
+        print(f"[resume] Pass --no_resume to start fresh.")
+
+
+def maybe_resume(args, mode, output_dir, model, optimizer, device):
+    """Decide which checkpoint (if any) to resume from.
+
+    Priority:
+      1. Explicit --resume <path>
+      2. <output_dir>/last_<mode>.pt (auto-resume on crash recovery)
+      3. None (fresh start)
+
+    `--no_resume` skips (2). Conflicting --resume + --no_resume raises.
+    On resume, warns about shape-affecting arg mismatches between the
+    checkpoint and the current invocation. When --no_resume is set and
+    best_<mode>.pt exists, the existing file is backed up to .bak so the
+    first improvement of the new run doesn't silently overwrite a prior
+    champion.
+    Returns (start_epoch, best_mrr, epochs_no_improve).
+    """
+    if args.resume and args.no_resume:
+        raise ValueError("--resume and --no_resume are mutually exclusive.")
+
+    last_path = os.path.join(output_dir, f"last_{mode}.pt")
+    best_path = os.path.join(output_dir, f"best_{mode}.pt")
+
+    resume_path = None
+    if args.resume:
+        if not os.path.exists(args.resume):
+            raise FileNotFoundError(args.resume)
+        resume_path = args.resume
+        print(f"[resume] using explicit --resume {resume_path}")
+    elif args.no_resume:
+        if os.path.exists(last_path):
+            print(f"[resume] --no_resume set; ignoring {last_path}")
+        if os.path.exists(best_path):
+            bak = best_path + ".bak"
+            shutil.copyfile(best_path, bak)
+            print(f"[resume] --no_resume set; backed up existing "
+                  f"{best_path} -> {bak} so first improvement doesn't clobber it")
+    elif os.path.exists(last_path):
+        resume_path = last_path
+        print(f"[resume] auto-resuming from {resume_path} "
+              f"(pass --no_resume to start fresh)")
+
+    if resume_path is None:
+        return 1, -1.0, 0
+
+    start_epoch, best_mrr, epochs_no_improve, ckpt = load_checkpoint(
+        resume_path, model, optimizer, device,
+    )
+    saved_args = ckpt.get("args", {})
+    if saved_args:
+        _warn_arg_mismatches(saved_args, args)
+    print(f"[resume] continuing at epoch {start_epoch} "
+          f"(best_mrr={best_mrr:.2f}, epochs_no_improve={epochs_no_improve})")
+    return start_epoch, best_mrr, epochs_no_improve
+
+
+def cleanup_last_ckpt(output_dir, mode):
+    """Remove last_<mode>.pt after a clean training finish so the next
+    invocation doesn't auto-resume from a stale checkpoint."""
+    last_path = os.path.join(output_dir, f"last_{mode}.pt")
+    if os.path.exists(last_path):
+        try:
+            os.remove(last_path)
+            print(f"[cleanup] removed {last_path}")
+        except OSError as e:
+            print(f"[cleanup] could not remove {last_path}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +502,11 @@ def parse_args():
     p.add_argument("--eval_chunk", type=int, default=256)
     p.add_argument("--num_workers", type=int, default=2)
 
-    p.add_argument("--resume", type=str, default=None)
+    p.add_argument("--resume", type=str, default=None,
+                   help="Explicit checkpoint path to resume from. If omitted, "
+                        "auto-resume from <output_dir>/last_<mode>.pt when present.")
+    p.add_argument("--no_resume", action="store_true",
+                   help="Ignore any existing last_<mode>.pt and start fresh.")
     p.add_argument("--no_multi_valid", action="store_true")
     p.add_argument("--ablation_no_compound", action="store_true",
                    help="Drop I-F / I-D edges (keep only I-I). Used for the "
@@ -356,6 +541,7 @@ def main():
               "auto-detected from nodes_filtered.csv")
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+    random.seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     use_health_goal = (args.mode == "mvp")
     os.makedirs(args.output_dir, exist_ok=True)
@@ -453,22 +639,21 @@ def main():
 
     optimizer = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    start_epoch = 1
-    best_mrr = -1.0
-    if args.resume:
-        if not os.path.exists(args.resume):
-            raise FileNotFoundError(args.resume)
-        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model"])
-        if "optimizer" in ckpt:
-            optimizer.load_state_dict(ckpt["optimizer"])
-        start_epoch = int(ckpt["epoch"]) + 1
-        if "val_metrics" in ckpt and "MRR" in ckpt["val_metrics"]:
-            best_mrr = float(ckpt["val_metrics"]["MRR"])
-        print(f"[resume] from epoch {ckpt['epoch']}, best_mrr={best_mrr:.2f}")
+    best_ckpt_path = os.path.join(args.output_dir, f"best_{args.mode}.pt")
+    last_ckpt_path = os.path.join(args.output_dir, f"last_{args.mode}.pt")
+    ckpt_extra = {"num_total_nodes": num_total_nodes}
 
-    ckpt_path = os.path.join(args.output_dir, f"best_{args.mode}.pt")
-    epochs_no_improve = 0
+    start_epoch, best_mrr, epochs_no_improve = maybe_resume(
+        args, args.mode, args.output_dir, model, optimizer, device,
+    )
+
+    if start_epoch > args.max_epochs:
+        print(f"[resume] start_epoch={start_epoch} > max_epochs={args.max_epochs}; "
+              f"training loop will be skipped.")
+        if not os.path.exists(best_ckpt_path):
+            print(f"[resume] ERROR: no {best_ckpt_path} either. "
+                  f"Pass --no_resume to start fresh, or raise --max_epochs.")
+            return
 
     for epoch in range(start_epoch, args.max_epochs + 1):
         t0 = time.time()
@@ -489,29 +674,41 @@ def main():
               f"val MRR={val_metrics['MRR']:.2f} Hit@1={val_metrics['Hit@1']:.2f} "
               f"Hit@10={val_metrics['Hit@10']:.2f} | {elapsed:.1f}s")
 
-        if val_metrics["MRR"] > best_mrr:
+        improved = val_metrics["MRR"] > best_mrr
+        if improved:
             best_mrr = val_metrics["MRR"]
             epochs_no_improve = 0
-            torch.save({
-                "epoch": epoch,
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "args": vars(args),
-                "num_total_nodes": num_total_nodes,
-                "val_metrics": {k: v for k, v in val_metrics.items()
-                                 if k in ("MRR", "Hit@1", "Hit@3", "Hit@10")},
-            }, ckpt_path)
         else:
             epochs_no_improve += 1
-            if epochs_no_improve >= args.patience:
-                print(f"[early-stop] no MRR improvement for {args.patience} epochs.")
-                break
 
-    if not os.path.exists(ckpt_path):
+        # Order matters: save BEST first, then LAST. If we crash between
+        # the two, best is up-to-date and last is one epoch behind. On
+        # resume, the lagging epoch is re-trained (deterministic via
+        # restored RNG) and idempotently rewrites best. The reverse order
+        # would leave best stale and let a subsequent worse epoch
+        # overwrite the better best that already happened on disk.
+        ckpt_state = dict(
+            model=model, optimizer=optimizer, epoch=epoch,
+            best_mrr=best_mrr, epochs_no_improve=epochs_no_improve,
+            args=args, val_metrics=val_metrics, extra=ckpt_extra,
+        )
+        if improved:
+            save_checkpoint(best_ckpt_path, **ckpt_state)
+        save_checkpoint(last_ckpt_path, **ckpt_state)
+
+        if epochs_no_improve >= args.patience:
+            print(f"[early-stop] no MRR improvement for {args.patience} epochs.")
+            break
+
+    # Training loop done (natural end or early-stop). Remove last_*.pt
+    # NOW (before test eval) so a test-eval exception doesn't orphan it.
+    cleanup_last_ckpt(args.output_dir, args.mode)
+
+    if not os.path.exists(best_ckpt_path):
         print("[warning] no checkpoint saved.")
         return
 
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    ckpt = torch.load(best_ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model"])
 
     if not use_health_goal:

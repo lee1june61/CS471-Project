@@ -167,11 +167,12 @@ Each notebook expects your Drive layout to be:
 
 ```
 MyDrive/CS471_project/
+├── code/                # this repo's `code/` tree, uploaded to Drive
 ├── data/                # the dataset (see "Data" section above)
 └── outputs/             # auto-created, persists ckpts and predictions
 ```
 
-Edit `PROJECT_ROOT` in cell 5 if your layout differs. The notebooks `!git clone` this repo at `/content/CS471-Project`, so no upload is needed.
+Edit `PROJECT_ROOT` in cell 4 if your layout differs. The notebooks `os.chdir` into `code/` on Drive (no git clone), so upload this `code/` directory to your Drive before running.
 
 GPU: free T4 is fine. CPU-only also works but each sweep takes ~10x longer.
 
@@ -181,16 +182,20 @@ GPU: free T4 is fine. CPU-only also works but each sweep takes ~10x longer.
 
 ### Step 0 — Smoke test (1 epoch each, ~5–10 min)
 
+`--no_resume` is important here: with `--max_epochs 1`, any stale
+`last_*.pt` from a previously-interrupted smoke would make subsequent
+smokes a silent no-op (start_epoch=2 > max_epochs=1).
+
 ```bash
-python src/train_v1.py --mode baseline --max_epochs 1 --patience 1 \
+python src/train_v1.py --mode baseline --max_epochs 1 --patience 1 --no_resume \
     --data_dir ./data --output_dir ./out/smoke/baseline
-python src/train_v1.py --mode mvp      --max_epochs 1 --patience 1 \
+python src/train_v1.py --mode mvp      --max_epochs 1 --patience 1 --no_resume \
     --data_dir ./data --output_dir ./out/smoke/mvp
-python src/train_v2.py                  --max_epochs 1 --patience 1 \
+python src/train_v2.py                  --max_epochs 1 --patience 1 --no_resume \
     --data_dir ./data --output_dir ./out/smoke/v2
-python src/train_v3.py                  --max_epochs 1 --patience 1 \
+python src/train_v3.py                  --max_epochs 1 --patience 1 --no_resume \
     --data_dir ./data --output_dir ./out/smoke/v3
-python src/train_v4.py                  --max_epochs 1 --patience 1 \
+python src/train_v4.py                  --max_epochs 1 --patience 1 --no_resume \
     --data_dir ./data --output_dir ./out/smoke/v4
 ```
 
