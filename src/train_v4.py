@@ -38,7 +38,8 @@ from models_v4 import GISMo
 from train_v1 import (GOAL_DIM, parse_g_label, sample_negatives,
                       health_loss_fn, _build_valid_target_mask,
                       ids_to_positions, build_id_to_pos,
-                      save_checkpoint, maybe_resume, cleanup_last_ckpt)
+                      save_checkpoint, maybe_resume, cleanup_last_ckpt,
+                      maybe_skip_completed)
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +191,10 @@ def parse_args():
                         "<output_dir>/last_v4.pt when present.")
     p.add_argument("--no_resume", action="store_true",
                    help="Ignore any existing last_v4.pt and start fresh.")
+    p.add_argument("--force_retrain", action="store_true",
+                   help="Retrain even if best_v4.pt already exists (backs it "
+                        "up to .bak). Default: skip training and re-evaluate "
+                        "the saved best.")
     p.add_argument("--no_multi_valid", action="store_true")
     p.add_argument("--ablation_no_compound", action="store_true",
                    help="Drop I-F / I-D edges (keep only I-I). 'w/o flavor compound' ablation.")
@@ -314,6 +319,7 @@ def main():
     start_epoch, best_mrr, epochs_no_improve = maybe_resume(
         args, "v4", args.output_dir, model, optimizer, device,
     )
+    start_epoch = maybe_skip_completed(args, best_ckpt_path, start_epoch)
 
     if start_epoch > args.max_epochs:
         print(f"[resume] start_epoch={start_epoch} > max_epochs={args.max_epochs}; "

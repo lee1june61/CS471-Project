@@ -19,6 +19,11 @@ independent of each other and of the baselines. Run 06 after 04 so its
 ablations can be compared against the Full v3 model (the Full row is skipped
 gracefully if 04 hasn't run).
 
+**Re-running is safe**: if a model's `best_*.pt` already exists, the train cell
+**skips training and just re-evaluates** that checkpoint (it won't retrain from
+scratch or overwrite it). Pass `--force_retrain` on the training command to
+train again from scratch.
+
 ## Before you run — prepare the data
 
 The training scripts need **seven** files in `DATA_DIR`:

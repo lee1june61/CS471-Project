@@ -339,7 +339,7 @@ python src/eval_filter_baseline.py \
        --test_g_overrides auto 1_0 0_1 1_1 \
        --data_dir ./data --output_dir ./out/v3_lam{BEST}
    ```
-   Using the same `--output_dir` resumes from the saved checkpoint, so only evaluation runs.
+   Re-using the same `--output_dir` skips training because `best_v3.pt` already exists, so only the test evaluation runs (pass `--force_retrain` to train from scratch instead).
 3. Open `notebooks/06_eval_results.ipynb`, set `BEST_LAMBDA` at the top, run all cells. Outputs:
    - `out/table1_main_results.csv` — Main results (baselines + ours)
    - `out/table2_ablation.csv` — Ablation study + Δ-from-Full view

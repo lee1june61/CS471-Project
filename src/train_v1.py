@@ -223,6 +223,42 @@ def cleanup_last_ckpt(output_dir, mode):
             print(f"[cleanup] could not remove {last_path}: {e}")
 
 
+def maybe_skip_completed(args, best_ckpt_path, start_epoch):
+    """Re-run protection for an already-completed training run.
+
+    A completed run leaves best_<mode>.pt but cleanup_last_ckpt removed
+    last_<mode>.pt, so maybe_resume finds no checkpoint and returns
+    start_epoch=1. A plain re-run (same --output_dir, no flags) would then
+    retrain from scratch AND clobber the trained champion (best_mrr resets to
+    -1, so epoch 1 overwrites best, with no .bak). Guard against that:
+
+      * plain fresh start (start_epoch == 1, no --resume / --no_resume) +
+        best_<mode>.pt already exists, and no --force_retrain  -> skip training
+        by bumping start_epoch past max_epochs (reusing the existing "skip
+        loop, evaluate best" path) and just re-evaluate the saved best.
+      * --force_retrain  -> back up best -> .bak, then retrain from scratch.
+
+    Explicit --resume / --no_resume mean the user is driving the run, so they
+    bypass the auto-skip: --no_resume already backed best up in maybe_resume
+    and must keep its "always start fresh" contract (smoke tests rely on it).
+    A genuine crash-resume (start_epoch > 1) is likewise left untouched.
+    Returns the (possibly bumped) start_epoch.
+    """
+    if start_epoch != 1 or args.resume or args.no_resume:
+        return start_epoch
+    if not os.path.exists(best_ckpt_path):
+        return start_epoch
+    if args.force_retrain:
+        shutil.copyfile(best_ckpt_path, best_ckpt_path + ".bak")
+        print(f"[train] --force_retrain: backed up {best_ckpt_path} -> "
+              f"{best_ckpt_path}.bak; retraining from scratch")
+        return start_epoch
+    print(f"[train] {best_ckpt_path} already exists; skipping training "
+          f"(pass --force_retrain to retrain from scratch). "
+          f"Re-evaluating the saved best.")
+    return args.max_epochs + 1
+
+
 # ---------------------------------------------------------------------------
 # Helpers (sparse id support)
 # ---------------------------------------------------------------------------
@@ -507,6 +543,10 @@ def parse_args():
                         "auto-resume from <output_dir>/last_<mode>.pt when present.")
     p.add_argument("--no_resume", action="store_true",
                    help="Ignore any existing last_<mode>.pt and start fresh.")
+    p.add_argument("--force_retrain", action="store_true",
+                   help="Retrain even if best_<mode>.pt already exists "
+                        "(backs it up to .bak). Default: skip training and "
+                        "re-evaluate the saved best.")
     p.add_argument("--no_multi_valid", action="store_true")
     p.add_argument("--ablation_no_compound", action="store_true",
                    help="Drop I-F / I-D edges (keep only I-I). Used for the "
@@ -646,6 +686,7 @@ def main():
     start_epoch, best_mrr, epochs_no_improve = maybe_resume(
         args, args.mode, args.output_dir, model, optimizer, device,
     )
+    start_epoch = maybe_skip_completed(args, best_ckpt_path, start_epoch)
 
     if start_epoch > args.max_epochs:
         print(f"[resume] start_epoch={start_epoch} > max_epochs={args.max_epochs}; "
