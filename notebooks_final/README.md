@@ -64,9 +64,9 @@ Edit those lines if you want to try other values; nothing else needs touching.
 MyDrive/CS471_project/
 ├── code/                 # this repo's code/ tree
 ├── data/                 # the dataset (all 7 files above)
-└── outputs/final/        # auto-created; final-run ckpts + predictions
+└── outputs/              # auto-created; per-model ckpts + predictions
 ```
 
-Final runs write under `outputs/final/` so they never clobber the exploratory
-sweep outputs in `outputs/`. Set `PROJECT_ROOT` in the mount cell if your layout
+Each model writes to its own subdir under `outputs/` (e.g. `outputs/v3/`,
+`outputs/baseline/`). Set `PROJECT_ROOT` in the mount cell if your layout
 differs, then **Runtime > Run all**.

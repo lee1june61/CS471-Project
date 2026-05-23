@@ -110,10 +110,10 @@ out/
 └── sweep_summary_v3.json      # same + raw metric dicts
 ```
 
-The `notebooks_final/` set writes a parallel tree under `outputs/final/`:
+The `notebooks_final/` set writes its runs under `outputs/`:
 
 ```
-outputs/final/
+outputs/
 ├── baseline/  filter_baseline/         # 01, 02
 ├── v2/  v3/  v4/                        # 03, 04, 05 → test_predictions_<v>_{auto,1_0,0_1,1_1}.json
 ├── v1mvp/  v3_lam0/  v3_no_compound/    # 06 ablation rows
@@ -170,7 +170,7 @@ Each notebook fits a single free-T4 session (~12 h limit). A single train + test
 | 05 | `05_v4.ipynb` | v4 — decoder concat injection | — | 30 min |
 | 06 | `06_ablations.ipynb` | Table 2 ablations (w/o nutrition inject / L_health / flavor compound) | 04's ckpt | 1.5 hr |
 
-Run order: 01 → 02 (02 loads 01's checkpoint); 03/04/05 are independent; run 06 after 04 (Full-model reference). These write under `outputs/final/`.
+Run order: 01 → 02 (02 loads 01's checkpoint); 03/04/05 are independent; run 06 after 04 (Full-model reference). These write under `outputs/`.
 
 ### Drive layout
 
@@ -178,8 +178,7 @@ Run order: 01 → 02 (02 loads 01's checkpoint); 03/04/05 are independent; run 0
 MyDrive/CS471_project/
 ├── code/                # this repo's `code/` tree, uploaded to Drive
 ├── data/                # the dataset (see "Data" section above)
-└── outputs/             # auto-created, persists ckpts and predictions
-    └── final/           # the notebooks_final/ runs land here
+└── outputs/             # auto-created; per-model ckpts + predictions land here
 ```
 
 Edit `PROJECT_ROOT` near the top of the notebook if your layout differs. The notebooks `os.chdir` into `code/` on Drive (no git clone), so upload this `code/` directory to your Drive before running.
