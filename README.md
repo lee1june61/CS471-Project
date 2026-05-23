@@ -4,7 +4,7 @@
 
 Goal-conditioned extension of [GISMo](https://github.com/facebookresearch/gismo) (Pellegrini et al.) that recommends ingredient substitutes which preserve recipe flavor **and** satisfy a user-specified health goal (e.g., reduce sugar, reduce sodium). Built on top of the [FlavorGraph](https://github.com/lamypark/FlavorGraph) ingredient–compound structure with added USDA nutrient information.
 
-**TL;DR** — open `notebooks/03_train_v3_sweep.ipynb` on Colab, point `PROJECT_ROOT` at your Drive, run all. That reproduces the main result.
+**TL;DR** — open `notebooks_final/04_v3.ipynb` on Colab, point `PROJECT_ROOT` at your Drive, run all. That trains + tests the main model (v3) at the chosen hyper-parameters. See [Reproducing on Colab](#reproducing-on-colab-recommended) for the full set.
 
 ## Contents
 
@@ -80,7 +80,15 @@ Training:  L = L_substitution (GISMo InfoNCE)  +  λ · L_health
 │   ├── run_lambda_sweep.py         # orchestrate λ sweep + collect metrics
 │   ├── convert_data.py             # GISMo .pkl + graph data → our format
 │   └── mock_data.py                # synthetic data for smoke testing
-└── notebooks/                      # Colab-ready, one notebook per training task
+├── notebooks_final/                # FINAL submission: single train+test per model at the chosen hyper-params
+│   ├── README.md                   # run order + the only knobs (LAMBDA_H / TAU_PERCENTILE)
+│   ├── 01_baseline.ipynb           # vanilla GISMo
+│   ├── 02_filter_baseline.ipynb    # GISMo + post-hoc filter (needs 01)
+│   ├── 03_v2.ipynb                 # encoder injection
+│   ├── 04_v3.ipynb                 # structural hub (Full model)
+│   ├── 05_v4.ipynb                 # decoder concat
+│   └── 06_ablations.ipynb          # Table 2 ablations (needs 04 for Full row)
+└── notebooks/                      # exploratory lambda-sweep notebooks (kept as-is; not needed for the final numbers)
     ├── 01_setup_data.ipynb         # data prep (only if you have raw GISMo files)
     ├── 02_train_baseline.ipynb     # vanilla GISMo  (~30 min on T4)
     ├── 03_train_v3_sweep.ipynb     # v3 lambda sweep -- main contribution  (~2.5 hr)
@@ -88,10 +96,10 @@ Training:  L = L_substitution (GISMo InfoNCE)  +  λ · L_health
     ├── 03c_train_v2_sweep.ipynb    # v2 lambda sweep -- encoder injection  (~2.5 hr)
     ├── 04_train_ablations.ipynb    # v1 MVP + v3 no-compound  (~1 hr)
     ├── 05_filter_baseline.ipynb    # post-hoc filter on baseline ckpt  (~10 min)
-    ├── 06_eval_results.ipynb       # final Tables 1 / 2 + Pareto + case study
-    ├── _gen_train_notebooks.py     # generator for 02-05
-    └── _gen_eval_notebook.py       # generator for 06
+    └── 06_eval_results.ipynb       # final Tables 1 / 2 + Pareto + case study
 ```
+
+> The notebook generators (`_gen_*.py`) are kept out of the repo under `archive/notebook_generators/`; the `.ipynb` files above are what you run.
 
 <details>
 <summary><b>Output directory layout</b> (training scripts auto-create subdirs under <code>--output_dir</code>)</summary>
@@ -110,6 +118,16 @@ out/
 │   └── test_predictions_v3_auto.json
 ├── sweep_summary_v3.csv       # plot-ready Pareto data
 └── sweep_summary_v3.json      # same + raw metric dicts
+```
+
+The `notebooks_final/` set writes a parallel tree under `outputs/final/`:
+
+```
+outputs/final/
+├── baseline/  filter_baseline/         # 01, 02
+├── v2/  v3/  v4/                        # 03, 04, 05 → test_predictions_<v>_{auto,1_0,0_1,1_1}.json
+├── v1mvp/  v3_lam0/  v3_no_compound/    # 06 ablation rows
+└── table2_ablation.csv                 # written by 06
 ```
 
 </details>
@@ -151,7 +169,26 @@ pip install -r requirements.txt
 
 ## Reproducing on Colab (recommended)
 
-Each training task is one notebook so it fits a single free-T4 session (~12 h limit). Open them on Colab in order:
+Each notebook fits a single free-T4 session (~12 h limit). There are two sets.
+
+### Final-submission notebooks — `notebooks_final/` (run these)
+
+A single train + test per model at the chosen hyper-parameters. **`λ_h` is fixed at `1.0` for every model**, and `τ` at `0` — both live in a one-line `Config` cell near the top of each notebook, so they're trivial to change if you want to try other values. That `Config` cell is the only knob. Each notebook prints its own full metric table (MRR / Hit@k / health satisfaction / flavor cosine / ID-OOD), so you don't need a separate eval notebook. See `notebooks_final/README.md` for details.
+
+| # | Notebook | Model | Needs | ~Time |
+|---|---|---|---|---|
+| 01 | `01_baseline.ipynb` | Vanilla GISMo (no health awareness) | — | 30 min |
+| 02 | `02_filter_baseline.ipynb` | GISMo + post-hoc hard / soft filter | 01's ckpt | 10 min |
+| 03 | `03_v2.ipynb` | v2 — encoder feature injection | — | 30 min |
+| 04 | `04_v3.ipynb` | v3 — structural hub injection (**Full model**) | — | 30 min |
+| 05 | `05_v4.ipynb` | v4 — decoder concat injection | — | 30 min |
+| 06 | `06_ablations.ipynb` | Table 2 ablations (w/o nutrition inject / L_health / flavor compound) | 04's ckpt | 1.5 hr |
+
+Run order: 01 → 02 (02 loads 01's checkpoint); 03/04/05 are independent; run 06 after 04 (Full-model reference). These write under `outputs/final/` so they never clobber the sweep outputs.
+
+### Exploratory sweeps — `notebooks/` (how we picked λ)
+
+The original `λ ∈ {0, 0.1, 1, 5, 10}` sweep notebooks, kept for transparency. Not needed to reproduce the final numbers.
 
 | # | Notebook | What it does | ~Time |
 |---|---|---|---|
@@ -163,24 +200,68 @@ Each training task is one notebook so it fits a single free-T4 session (~12 h li
 | 05 | `05_filter_baseline.ipynb` | GISMo + post-hoc hard / soft filter (uses ckpt from 02). | 10 min |
 | 06 | `06_eval_results.ipynb` | Builds Table 1 (main), Table 2 (ablation), Pareto plots, g-override check, case study. | 5 min |
 
-Each notebook expects your Drive layout to be:
+### Drive layout (both sets)
 
 ```
 MyDrive/CS471_project/
 ├── code/                # this repo's `code/` tree, uploaded to Drive
 ├── data/                # the dataset (see "Data" section above)
 └── outputs/             # auto-created, persists ckpts and predictions
+    └── final/           # the notebooks_final/ runs land here
 ```
 
-Edit `PROJECT_ROOT` in cell 4 if your layout differs. The notebooks `os.chdir` into `code/` on Drive (no git clone), so upload this `code/` directory to your Drive before running.
+Edit `PROJECT_ROOT` near the top of the notebook if your layout differs. The notebooks `os.chdir` into `code/` on Drive (no git clone), so upload this `code/` directory to your Drive before running.
 
-GPU: free T4 is fine. CPU-only also works but each sweep takes ~10x longer.
+GPU: free T4 is fine. CPU-only also works but each run takes ~10x longer.
 
 ---
 
 ## Reproducing locally (CLI)
 
-### Step 0 — Smoke test (1 epoch each, ~5–10 min)
+The notebooks just wrap these `python src/…` commands.
+
+### Final-submission runs (`λ_h = 1.0`, `τ = 0`)
+
+Mirror of `notebooks_final/` — single train + test per model at the fixed
+hyper-parameters (change `--lambda_h` / `--tau_percentile` to try other values):
+
+```bash
+# Baselines
+python src/train_v1.py --mode baseline \
+    --data_dir ./data --output_dir ./out/final/baseline
+python src/eval_filter_baseline.py \
+    --checkpoint ./out/final/baseline/best_baseline.pt \
+    --data_dir ./data --output_dir ./out/final/filter_baseline \
+    --tau_percentile 0 --filter_mode both --alpha 0.5 1.0
+
+# Trained variants (lambda_h = 1.0)
+for V in v2 v3 v4; do
+  python src/train_$V.py --lambda_h 1.0 --tau_percentile 0 \
+      --test_g_overrides auto 1_0 0_1 1_1 \
+      --data_dir ./data --output_dir ./out/final/$V
+done
+
+# Ablations (Table 2): w/o nutrition inject, w/o L_health, w/o flavor compound
+python src/train_v1.py --mode mvp --lambda_h 1.0 --tau_percentile 0 \
+    --test_g_overrides auto 1_0 0_1 1_1 \
+    --data_dir ./data --output_dir ./out/final/v1mvp
+python src/train_v3.py --lambda_h 0 --tau_percentile 0 \
+    --test_g_overrides auto 1_0 0_1 1_1 \
+    --data_dir ./data --output_dir ./out/final/v3_lam0
+python src/train_v3.py --lambda_h 1.0 --tau_percentile 0 --ablation_no_compound \
+    --test_g_overrides auto 1_0 0_1 1_1 \
+    --data_dir ./data --output_dir ./out/final/v3_no_compound
+```
+
+Each `test_predictions_*.json` can be fed to `evaluate_health.py` /
+`evaluate_flavor.py` / `evaluate_id_ood.py` for the full metric set (the
+notebooks do this for you).
+
+### Exploratory workflow (how we picked λ)
+
+The steps below are the original λ-sweep workflow, kept for transparency.
+
+#### Step 0 — Smoke test (1 epoch each, ~5–10 min)
 
 `--no_resume` is important here: with `--max_epochs 1`, any stale
 `last_*.pt` from a previously-interrupted smoke would make subsequent
@@ -201,7 +282,7 @@ python src/train_v4.py                  --max_epochs 1 --patience 1 --no_resume 
 
 Each script's first log line should read `[load_node_ids] 6313 ingredients ... num_total_nodes=8748`.
 
-### Step 1 — L_health sanity check
+#### Step 1 — L_health sanity check
 
 Confirm that `L_health` actually drives training (run 3 epochs with two extreme λ values; val MRR should clearly differ):
 
@@ -212,7 +293,7 @@ python src/train_v3.py --max_epochs 3 --lambda_h 10  --tau_percentile 0 \
     --data_dir ./data --output_dir ./out/lh_check_l10
 ```
 
-### Step 2 — Main training
+#### Step 2 — Main training
 
 ```bash
 # Vanilla GISMo (required for filter baseline)
@@ -240,7 +321,7 @@ python src/train_v3.py --tau_percentile 0 --ablation_no_compound \
 # (Ablation 2 = w/o L_health is automatically covered by λ=0 in the sweep)
 ```
 
-### Step 3 — Filter baselines
+#### Step 3 — Filter baselines
 
 ```bash
 python src/eval_filter_baseline.py \
@@ -249,7 +330,7 @@ python src/eval_filter_baseline.py \
     --filter_mode both --alpha 0.5 1.0
 ```
 
-### Step 4 — Result tables
+#### Step 4 — Result tables
 
 1. After the sweep, look at `out/sweep_summary_v3.csv` to choose `BEST_LAMBDA`.
 2. (For `g`-override case study) re-run the best-λ v3 with all four overrides:
@@ -283,9 +364,9 @@ python src/eval_filter_baseline.py \
 | Dropout | 0.25 | GISMo |
 | Batch size | 64 | ours |
 | Negative samples (`K`) | 10 | ours |
-| `λ_h` | sweep `{0, 0.1, 1, 5, 10}` | ours |
+| `λ_h` | **`1.0`** for the final notebooks (editable in their `Config` cell); explored over the sweep `{0, 0.1, 1, 5, 10}` in `notebooks/` | ours |
 | Margin (hinge) | 0.5 | ours |
-| τ (goal threshold) | percentile of positive Δ in train (default 0) | ours |
+| τ (goal threshold) | percentile of positive Δ in train (`0` = any reduction; the final notebooks use `0`) | ours |
 | `g_dim` | 2 (sugar, sodium) | ours |
 | Hub nutrient keys (v2/v3) | 7 (calories, fat, sat-fat, carb, sugar, protein, sodium) | ours |
 
@@ -310,7 +391,7 @@ where the candidate set `C = {target, neg_1, ..., neg_K}` and the expectation is
 | Sugar / sodium satisfaction rate (%) | Fraction of predictions that strictly reduce the target nutrient | `evaluate_health.py` |
 | Flavor cosine | I-F profile cosine(source, top-1) on hub-only pairs (= taste preservation) | `evaluate_flavor.py` |
 | ID / OOD MRR | MRR split by whether `(s, y)` appeared in train | `evaluate_id_ood.py` |
-| g-override sensitivity | Δ satisfaction rate between `g=[1,0]` and `g=[0,1]` (tests whether model uses `g`) | notebook cell 17 |
+| g-override sensitivity | Δ satisfaction rate between `g=[1,0]` and `g=[0,1]` (tests whether model uses `g`) | printed inline by each v2/v3/v4 final notebook |
 
 ---
 
