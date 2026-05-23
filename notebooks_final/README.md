@@ -2,8 +2,7 @@
 
 These are the notebooks for the TA to reproduce our reported numbers. Each one
 does a **single train + test at the chosen optimal hyper-parameters** (no sweep)
-and prints the full metric set for that run. The exploratory lambda-sweep
-notebooks live in `../notebooks/` and are kept as-is.
+and prints the full metric set for that run.
 
 | # | Notebook | Model | Needs | ~Time |
 |---|---|---|---|---|
@@ -34,8 +33,8 @@ pairs_train.csv  pairs_val.csv  pairs_test.csv  recipes.json   # substitution pa
 ```
 
 If you only have the three graph/nutrient files, generate the pairs + recipes
-first with `src/convert_data.py` (or run `../notebooks/01_setup_data.ipynb`).
-Each notebook has a data-check cell right after the Drive mount that **stops with
+first with `src/convert_data.py`. Each notebook has a data-check cell right
+after the Drive mount that **stops with
 a clear `Missing data files…` error** if any of the seven are absent, so you
 won't get a cryptic failure deep inside training.
 
@@ -56,7 +55,8 @@ TAU_PERCENTILE = 0     # goal threshold percentile (0 = any reduction)
 ```
 
 Edit those lines if you want to try other values; nothing else needs touching.
-(The exploratory `λ` sweep that motivated `1.0` lives in `../notebooks/`.)
+(The exploratory `λ` sweep that motivated `1.0` is available via
+`src/run_lambda_sweep.py`.)
 
 ## Drive layout (Colab)
 

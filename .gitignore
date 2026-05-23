@@ -6,7 +6,6 @@ __pycache__/
 
 # Jupyter
 .ipynb_checkpoints/
-notebooks/.ipynb_checkpoints/
 
 # Virtual envs
 venv/
@@ -46,5 +45,4 @@ HANDOFF.md
 _archive/
 
 # Notebook export artifacts
-notebooks/*.html
-notebooks/*.pdf
+*.html
